@@ -5,120 +5,197 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DeepSeek Market Analyzer</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; min-height: 100vh; }
-    header { background: #1a1d2e; padding: 16px 24px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #2a2d3e; }
-    header h1 { font-size: 1.2rem; color: #7c8bff; }
-    .tag { font-size: 0.7rem; background: #2a2d3e; color: #aaa; padding: 2px 8px; border-radius: 99px; }
-    .container { max-width: 960px; margin: 32px auto; padding: 0 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-    @media (max-width: 700px) { .container { grid-template-columns: 1fr; } }
-    .card { background: #1a1d2e; border-radius: 12px; padding: 20px; border: 1px solid #2a2d3e; }
-    .card h2 { font-size: 0.95rem; color: #7c8bff; margin-bottom: 12px; }
-    textarea { width: 100%; background: #0f1117; color: #e0e0e0; border: 1px solid #2a2d3e; border-radius: 8px;
-      padding: 10px; font-size: 0.85rem; font-family: monospace; resize: vertical; min-height: 260px; outline: none; }
-    textarea:focus { border-color: #7c8bff; }
-    .btn-row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
-    button { padding: 8px 18px; border-radius: 8px; border: none; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: 0.2s; }
-    .btn-primary { background: #7c8bff; color: #fff; }
-    .btn-primary:hover { background: #5c6fe0; }
-    .btn-secondary { background: #2a2d3e; color: #ccc; }
-    .btn-secondary:hover { background: #3a3d55; }
-    .btn-danger { background: #ff5c5c22; color: #ff7070; border: 1px solid #ff7070; }
-    .result-card { grid-column: 1 / -1; }
-    #result-box { white-space: pre-wrap; word-break: break-word; font-size: 0.9rem; line-height: 1.7;
-      background: #0f1117; border: 1px solid #2a2d3e; border-radius: 8px; padding: 16px; min-height: 120px;
-      max-height: 500px; overflow-y: auto; }
-    .status { font-size: 0.8rem; color: #aaa; margin-top: 8px; }
-    .loading { display: inline-block; }
-    .loading::after { content: '...'; animation: dots 1.2s steps(3, end) infinite; }
-    @keyframes dots { 0%,20%{content:'.'} 40%{content:'..'} 60%,100%{content:'...'} }
-    .badge { display: inline-block; font-size: 0.7rem; padding: 2px 8px; border-radius: 99px; margin-left: 8px; }
-    .badge-green { background: #1a3a1a; color: #4caf50; }
-    .badge-red { background: #3a1a1a; color: #f44336; }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',sans-serif;background:#0f1117;color:#e0e0e0;min-height:100vh}
+    header{background:#1a1d2e;padding:14px 24px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #2a2d3e}
+    header h1{font-size:1.15rem;color:#7c8bff}
+    .tag{font-size:.7rem;background:#2a2d3e;color:#aaa;padding:2px 8px;border-radius:99px}
+    .layout{display:grid;grid-template-columns:260px 1fr;min-height:calc(100vh - 49px)}
+    @media(max-width:780px){.layout{grid-template-columns:1fr}}
+    /* Sidebar */
+    .sidebar{background:#13151f;border-right:1px solid #2a2d3e;padding:20px 14px;display:flex;flex-direction:column;gap:16px}
+    .sidebar h3{font-size:.8rem;color:#7c8bff;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+    .form-group{display:flex;flex-direction:column;gap:5px}
+    .form-group label{font-size:.75rem;color:#aaa}
+    .form-group input{background:#0f1117;border:1px solid #2a2d3e;border-radius:6px;padding:7px 10px;color:#e0e0e0;font-size:.82rem;outline:none}
+    .form-group input:focus{border-color:#7c8bff}
+    .toggle-row{display:flex;align-items:center;justify-content:space-between;font-size:.8rem;color:#aaa}
+    .toggle{position:relative;width:36px;height:20px}
+    .toggle input{opacity:0;width:0;height:0}
+    .slider{position:absolute;inset:0;background:#2a2d3e;border-radius:99px;cursor:pointer;transition:.2s}
+    .slider:before{content:'';position:absolute;width:14px;height:14px;left:3px;bottom:3px;background:#aaa;border-radius:50%;transition:.2s}
+    input:checked+.slider{background:#7c8bff}
+    input:checked+.slider:before{transform:translateX(16px);background:#fff}
+    .btn{padding:8px 14px;border-radius:7px;border:none;cursor:pointer;font-size:.82rem;font-weight:600;transition:.15s;width:100%}
+    .btn-primary{background:#7c8bff;color:#fff}
+    .btn-primary:hover{background:#5c6fe0}
+    .btn-secondary{background:#2a2d3e;color:#ccc}
+    .btn-secondary:hover{background:#3a3d55}
+    .btn-danger{background:#3a1a1a;color:#f44;border:1px solid #f44}
+    .status-dot{width:8px;height:8px;border-radius:50%;background:#555;display:inline-block;margin-right:6px}
+    .status-dot.ok{background:#4caf50}
+    .status-dot.err{background:#f44}
+    /* Main */
+    .main{padding:20px;display:flex;flex-direction:column;gap:16px;overflow-y:auto}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    @media(max-width:900px){.row{grid-template-columns:1fr}}
+    .card{background:#1a1d2e;border-radius:10px;padding:16px;border:1px solid #2a2d3e}
+    .card h2{font-size:.88rem;color:#7c8bff;margin-bottom:10px}
+    textarea{width:100%;background:#0f1117;color:#e0e0e0;border:1px solid #2a2d3e;border-radius:7px;padding:10px;font-size:.82rem;font-family:monospace;resize:vertical;min-height:240px;outline:none}
+    textarea:focus{border-color:#7c8bff}
+    .btn-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+    .btn-sm{padding:6px 12px;border-radius:6px;border:none;cursor:pointer;font-size:.8rem;font-weight:600;transition:.15s}
+    .btn-sm.primary{background:#7c8bff;color:#fff}
+    .btn-sm.primary:hover{background:#5c6fe0}
+    .btn-sm.secondary{background:#2a2d3e;color:#ccc}
+    .btn-sm.secondary:hover{background:#3a3d55}
+    .btn-sm.danger{background:#3a1a1a;color:#f77;border:1px solid #f77}
+    #result-box{white-space:pre-wrap;word-break:break-word;font-size:.88rem;line-height:1.75;background:#0f1117;border:1px solid #2a2d3e;border-radius:7px;padding:14px;min-height:140px;max-height:520px;overflow-y:auto}
+    .status-bar{font-size:.78rem;color:#aaa;margin-top:6px}
+    /* History */
+    #history-list{max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+    .h-item{background:#0f1117;border:1px solid #2a2d3e;border-radius:6px;padding:10px;cursor:pointer;transition:.15s}
+    .h-item:hover{border-color:#7c8bff}
+    .h-time{font-size:.7rem;color:#666}
+    .h-q{font-size:.8rem;color:#ccc;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .h-a{font-size:.78rem;color:#aaa;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    /* Question input */
+    #question-input{width:100%;background:#0f1117;border:1px solid #2a2d3e;border-radius:7px;padding:8px 10px;color:#e0e0e0;font-size:.82rem;outline:none;margin-top:6px}
+    #question-input:focus{border-color:#7c8bff}
+    .loading::after{content:'...';animation:dots 1.2s steps(3,end) infinite}
+    @keyframes dots{0%,20%{content:'.'}40%{content:'..'}60%,100%{content:'...'}}
   </style>
 </head>
 <body>
-
 <header>
   <h1>DeepSeek Market Analyzer</h1>
-  <span class="tag">爬蟲模式 · 無 API 費用</span>
+  <span class="tag">無 API 費用 · 爬蟲模式</span>
+  <span style="margin-left:auto;font-size:.75rem;color:#666" id="login-indicator">
+    <span class="status-dot" id="login-dot"></span><span id="login-label">未設定帳號</span>
+  </span>
 </header>
 
-<div class="container">
-  <div class="card">
-    <h2>市場資料 (JSON)</h2>
-    <textarea id="market-input" placeholder='{
-  "symbol": "BTCUSDT",
-  "price": 85000,
-  "change_24h": "+3.2%",
-  "volume_24h": "28B USD",
-  "note": "請分析目前趨勢"
-}'></textarea>
-    <div class="btn-row">
-      <button class="btn-primary" onclick="analyze()">送出分析</button>
-      <button class="btn-secondary" onclick="fetchMarket()">自動抓取市場資料</button>
-      <button class="btn-secondary" onclick="loadExample()">範例資料</button>
-      <button class="btn-danger" onclick="clearAll()">清除</button>
+<div class="layout">
+  <!-- Sidebar: Settings -->
+  <div class="sidebar">
+    <div>
+      <h3>DeepSeek 帳號設定</h3>
+      <div style="font-size:.73rem;color:#666;margin-bottom:10px">儲存後背景自動登入，不需手動操作</div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="s-email" placeholder="you@example.com" />
+      </div>
+      <div class="form-group" style="margin-top:10px">
+        <label>Password</label>
+        <input type="password" id="s-password" placeholder="留空表示不更新" />
+      </div>
+      <div class="form-group" style="margin-top:10px">
+        <label>Chrome Profile 路徑 (可選)</label>
+        <input type="text" id="s-profile" placeholder="/home/user/.config/google-chrome/Default" />
+      </div>
+      <div class="toggle-row" style="margin-top:12px">
+        <span>Headless (背景執行)</span>
+        <label class="toggle"><input type="checkbox" id="s-headless" checked /><span class="slider"></span></label>
+      </div>
+      <button class="btn btn-primary" style="margin-top:12px" onclick="saveSettings()">儲存設定</button>
+      <div class="status-bar" id="settings-status"></div>
     </div>
-    <div class="status" id="status"></div>
+    <hr style="border-color:#2a2d3e" />
+    <div>
+      <h3>分析記錄 <button class="btn-sm danger" style="float:right;padding:2px 8px" onclick="clearHistory()">清除</button></h3>
+      <div id="history-list"><div style="font-size:.8rem;color:#666">尚無記錄</div></div>
+    </div>
   </div>
 
-  <div class="card">
-    <h2>使用說明</h2>
-    <p style="font-size:0.85rem;line-height:1.8;color:#aaa;">
-      1. 點「自動抓取市場資料」拉取 BTC/ETH 即時價格 + 恐懼貪婪指數<br/>
-      2. 或自己在左側 JSON 編輯器貼入任何市場資料<br/>
-      3. 點「送出分析」— 後端用 Selenium 把 JSON 注入 DeepSeek 聊天框<br/>
-      4. 等待 DeepSeek 回應（約 10-30 秒），結果顯示在下方<br/><br/>
-      <strong style="color:#e0e0e0;">設定 Chrome Profile</strong><br/>
-      後端需要已登入 DeepSeek 的 Chrome Profile。<br/>
-      在終端設定環境變數：<br/>
-      <code style="color:#7c8bff;">CHROME_PROFILE=/path/to/chrome/profile python app.py</code><br/><br/>
-      或設 <code style="color:#7c8bff;">HEADLESS=false</code> 讓瀏覽器視窗可見以手動登入。
-    </p>
-  </div>
-
-  <div class="card result-card">
-    <h2>DeepSeek 分析結果</h2>
-    <div id="result-box">等待分析...</div>
+  <!-- Main Content -->
+  <div class="main">
+    <div class="row">
+      <!-- Market Data Editor -->
+      <div class="card">
+        <h2>市場資料 (JSON)</h2>
+        <textarea id="market-input" placeholder='{ "symbol": "BTC", ... }'></textarea>
+        <div class="btn-row">
+          <button class="btn-sm primary" onclick="fetchMarket()">自動抓取市場資料</button>
+          <button class="btn-sm secondary" onclick="loadExample()">範例資料</button>
+          <button class="btn-sm danger" onclick="clearInput()">清除</button>
+        </div>
+      </div>
+      <!-- Question & Send -->
+      <div class="card">
+        <h2>提問</h2>
+        <div style="font-size:.82rem;color:#aaa;line-height:1.7">
+          可自訂問題，或留空使用預設市場分析問題。<br/>
+          勾選「帶入歷史」會將最近 3 筆分析摘要附在 prompt 裡作為上下文。
+        </div>
+        <input id="question-input" type="text" placeholder="自訂問題（留空使用預設）" />
+        <div class="toggle-row" style="margin-top:12px">
+          <span style="font-size:.82rem;color:#aaa">帶入歷史上下文</span>
+          <label class="toggle"><input type="checkbox" id="include-history" checked /><span class="slider"></span></label>
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+          <button class="btn-sm primary" style="padding:10px 20px;font-size:.9rem" onclick="analyze()">送出分析</button>
+        </div>
+        <div class="status-bar" id="status"></div>
+      </div>
+    </div>
+    <!-- Result -->
+    <div class="card">
+      <h2>DeepSeek 分析結果</h2>
+      <div id="result-box">等待分析...</div>
+    </div>
   </div>
 </div>
 
 <script>
 const API = '';
 
-async function analyze() {
-  const raw = document.getElementById('market-input').value.trim();
-  if (!raw) { setStatus('請先輸入市場資料'); return; }
-  let market_data;
-  try { market_data = JSON.parse(raw); }
-  catch(e) { setStatus('JSON 格式錯誤: ' + e.message); return; }
-
-  setStatus('<span class="loading">分析中</span>，請稍候（約 15-30 秒）');
-  document.getElementById('result-box').textContent = '送出中...';
-
+// Load settings on startup
+async function loadSettings() {
   try {
-    const res = await fetch(API + '/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ market_data })
+    const r = await fetch(API + '/api/settings');
+    const d = await r.json();
+    document.getElementById('s-email').value = d.email || '';
+    document.getElementById('s-profile').value = d.chrome_profile || '';
+    document.getElementById('s-headless').checked = d.headless !== false;
+    const dot = document.getElementById('login-dot');
+    const lbl = document.getElementById('login-label');
+    if (d.email && d.has_password) {
+      dot.className = 'status-dot ok';
+      lbl.textContent = d.email + ' (已設定)';
+    } else {
+      dot.className = 'status-dot err';
+      lbl.textContent = '未設定帳號密碼';
+    }
+  } catch(e) {}
+}
+
+async function saveSettings() {
+  const body = {
+    email: document.getElementById('s-email').value.trim(),
+    password: document.getElementById('s-password').value,
+    chrome_profile: document.getElementById('s-profile').value.trim(),
+    headless: document.getElementById('s-headless').checked
+  };
+  try {
+    const r = await fetch(API + '/api/settings', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
     });
-    const data = await res.json();
-    if (data.error) { document.getElementById('result-box').textContent = '錯誤: ' + data.error; }
-    else { document.getElementById('result-box').textContent = data.result; }
-    setStatus('完成');
+    const d = await r.json();
+    document.getElementById('settings-status').textContent = d.ok ? '已儲存' : '儲存失敗';
+    document.getElementById('s-password').value = '';
+    await loadSettings();
   } catch(e) {
-    document.getElementById('result-box').textContent = '連線失敗: ' + e.message;
-    setStatus('錯誤');
+    document.getElementById('settings-status').textContent = '錯誤: ' + e.message;
   }
 }
 
 async function fetchMarket() {
   setStatus('<span class="loading">抓取市場資料中</span>');
   try {
-    const res = await fetch(API + '/api/fetch-market');
-    const data = await res.json();
-    document.getElementById('market-input').value = JSON.stringify(data, null, 2);
+    const r = await fetch(API + '/api/fetch-market');
+    const d = await r.json();
+    document.getElementById('market-input').value = JSON.stringify(d, null, 2);
     setStatus('市場資料已更新');
   } catch(e) {
     setStatus('抓取失敗: ' + e.message);
@@ -127,33 +204,108 @@ async function fetchMarket() {
 
 function loadExample() {
   const ex = {
-    symbol: "BTCUSDT",
-    price_usd: 85000,
-    change_24h_pct: 3.2,
-    volume_24h_usd: "28000000000",
-    fear_greed_index: 72,
-    fear_greed_label: "Greed",
-    dominance_btc_pct: 58.3,
-    top_news: [
-      "Fed 暗示 2025 年降息 2 次",
-      "BlackRock BTC ETF 單日流入 4.2 億美元",
-      "中國解除加密貨幣限制傳聞"
+    timestamp: new Date().toISOString().slice(0, 16) + ' UTC',
+    prices: {
+      BTC: { usd: 85000, change_24h_pct: 3.2, volume_24h_usd: 28000000000, market_cap_usd: 1680000000000 },
+      ETH: { usd: 4200, change_24h_pct: 1.8, volume_24h_usd: 14000000000 },
+      SOL: { usd: 220, change_24h_pct: -1.2 }
+    },
+    fear_greed: { current: { value: '72', value_classification: 'Greed', timestamp: Date.now() } },
+    global_market: { btc_dominance_pct: 58.3, market_cap_change_24h_pct: 2.1 },
+    trending_coins: [{ name: 'Sui', symbol: 'SUI', rank: 22 }],
+    latest_news: [
+      { title: 'Fed hints at 2 rate cuts in 2025', source: 'coindesk.com' },
+      { title: 'BlackRock BTC ETF sees $420M daily inflow', source: 'cryptoslate.com' }
     ],
-    question: "請根據以上資訊分析 BTC 短期走勢"
+    analysis_request: '請分析目前 BTC 短期走勢'
   };
   document.getElementById('market-input').value = JSON.stringify(ex, null, 2);
   setStatus('已載入範例資料');
 }
 
-function clearAll() {
+async function analyze() {
+  const raw = document.getElementById('market-input').value.trim();
+  if (!raw) { setStatus('請先輸入市場資料'); return; }
+  let market_data;
+  try { market_data = JSON.parse(raw); }
+  catch(e) { setStatus('JSON 格式錯誤: ' + e.message); return; }
+
+  const question = document.getElementById('question-input').value.trim();
+  const include_history = document.getElementById('include-history').checked;
+
+  setStatus('<span class="loading">分析中，請稍候（約 15-60 秒）</span>');
+  document.getElementById('result-box').textContent = '送出中...';
+
+  try {
+    const r = await fetch(API + '/api/analyze', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ market_data, question, include_history })
+    });
+    const d = await r.json();
+    if (d.error) {
+      document.getElementById('result-box').textContent = '錯誤: ' + d.error;
+    } else {
+      document.getElementById('result-box').textContent = d.result;
+    }
+    setStatus('完成');
+    await loadHistory();
+  } catch(e) {
+    document.getElementById('result-box').textContent = '連線失敗: ' + e.message;
+    setStatus('錯誤');
+  }
+}
+
+async function loadHistory() {
+  try {
+    const r = await fetch(API + '/api/history');
+    const data = await r.json();
+    const el = document.getElementById('history-list');
+    if (!data.length) { el.innerHTML = '<div style="font-size:.8rem;color:#666">尚無記錄</div>'; return; }
+    el.innerHTML = [...data].reverse().map((h, i) => `
+      <div class="h-item" onclick="loadFromHistory(${data.length-1-i})">
+        <div class="h-time">${h.timestamp}</div>
+        <div class="h-q">${h.prompt}</div>
+        <div class="h-a">${h.response.slice(0, 80)}...</div>
+      </div>
+    `).join('');
+  } catch(e) {}
+}
+
+let _historyCache = [];
+async function loadFromHistory(idx) {
+  const r = await fetch(API + '/api/history');
+  const data = await r.json();
+  _historyCache = data;
+  const h = data[idx];
+  if (!h) return;
+  document.getElementById('result-box').textContent = h.response;
+  document.getElementById('question-input').value = h.prompt;
+  if (h.market_snapshot) {
+    document.getElementById('market-input').value = JSON.stringify(h.market_snapshot, null, 2);
+  }
+  setStatus('已載入歷史記錄 ' + h.timestamp);
+}
+
+async function clearHistory() {
+  await fetch(API + '/api/history', { method: 'DELETE' });
+  await loadHistory();
+}
+
+function clearInput() {
   document.getElementById('market-input').value = '';
   document.getElementById('result-box').textContent = '等待分析...';
+  document.getElementById('question-input').value = '';
   setStatus('');
 }
 
 function setStatus(html) {
   document.getElementById('status').innerHTML = html;
 }
+
+// Init
+loadSettings();
+loadHistory();
 </script>
 </body>
 </html>
