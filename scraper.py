@@ -5,24 +5,90 @@ import pickle
 import re
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.keys import Keys
 
 DEEPSEEK_URL = "https://chat.deepseek.com"
 COOKIE_FILE = "deepseek_cookies.pkl"
 
+# Windows default Edge/Chrome binary paths
+EDGE_PATHS = [
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+]
+CHROME_PATHS = [
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    r"C:\Users\" + os.environ.get("USERNAME", "") + r"\AppData\Local\Google\Chrome\Application\chrome.exe",
+]
+
+
+def find_browser() -> tuple:
+    """
+    Returns (browser_type, binary_path) where browser_type is 'edge' or 'chrome'.
+    Prefers Edge because STW historically uses Edge on Windows.
+    """
+    for p in EDGE_PATHS:
+        if os.path.exists(p):
+            return "edge", p
+    for p in CHROME_PATHS:
+        if os.path.exists(p):
+            return "chrome", p
+    return "chrome", None  # let webdriver-manager try
+
+
+def build_driver(headless: bool = True, user_data_dir: str = None):
+    """Build Edge or Chrome WebDriver depending on what is installed."""
+    browser, binary = find_browser()
+
+    if browser == "edge":
+        from selenium.webdriver.edge.options import Options as EdgeOptions
+        from selenium.webdriver.edge.service import Service as EdgeService
+        from webdriver_manager.microsoft import EdgeChromiumDriverManager
+
+        opts = EdgeOptions()
+        if binary:
+            opts.binary_location = binary
+        if headless:
+            opts.add_argument("--headless=new")
+        opts.add_argument("--no-sandbox")
+        opts.add_argument("--disable-dev-shm-usage")
+        opts.add_argument("--disable-gpu")
+        opts.add_argument("--window-size=1280,900")
+        opts.add_argument("--lang=zh-TW")
+        if user_data_dir:
+            opts.add_argument(f"--user-data-dir={user_data_dir}")
+        service = EdgeService(EdgeChromiumDriverManager().install())
+        return webdriver.Edge(service=service, options=opts)
+    else:
+        from selenium.webdriver.chrome.options import Options as ChromeOptions
+        from selenium.webdriver.chrome.service import Service as ChromeService
+        from webdriver_manager.chrome import ChromeDriverManager
+
+        opts = ChromeOptions()
+        if binary:
+            opts.binary_location = binary
+        if headless:
+            opts.add_argument("--headless=new")
+        opts.add_argument("--no-sandbox")
+        opts.add_argument("--disable-dev-shm-usage")
+        opts.add_argument("--disable-gpu")
+        opts.add_argument("--window-size=1280,900")
+        opts.add_argument("--lang=zh-TW")
+        if user_data_dir:
+            opts.add_argument(f"--user-data-dir={user_data_dir}")
+        service = ChromeService(ChromeDriverManager().install())
+        return webdriver.Chrome(service=service, options=opts)
+
 
 def filter_bmp(text: str) -> str:
-    """Remove non-BMP characters (emoji etc) to avoid Edge/Chrome driver crash."""
+    """Strip non-BMP chars (emoji etc) to avoid msedgedriver BMP-only crash."""
     return "".join(c for c in text if ord(c) < 0x10000)
 
 
 def set_input_value_js(driver, element, text: str):
-    """Inject text via JS React-compatible setter (handles contenteditable & textarea)."""
+    """React-compatible JS text injection (handles textarea + contenteditable)."""
     safe = filter_bmp(text)
     driver.execute_script("""
         var el = arguments[0];
@@ -38,20 +104,6 @@ def set_input_value_js(driver, element, text: str):
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
     """, element, safe)
-
-
-def build_options(headless: bool = True, user_data_dir: str = None) -> Options:
-    options = Options()
-    if headless:
-        options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1280,900")
-    options.add_argument("--lang=zh-TW")
-    if user_data_dir:
-        options.add_argument(f"--user-data-dir={user_data_dir}")
-    return options
 
 
 def try_load_cookies(driver) -> bool:
@@ -83,56 +135,51 @@ def save_cookies(driver):
 
 
 def login_with_password(driver, wait, email: str, password: str) -> bool:
-    """Login via email+password. Returns True on success."""
     try:
         driver.get(DEEPSEEK_URL)
         time.sleep(3)
-        # Look for login / sign in button or link
+        # Click login link if present
         try:
-            login_btn = wait.until(EC.element_to_be_clickable(
-                (By.XPATH, "//*[contains(text(),'Log in') or contains(text(),'Sign in') "
-                            "or contains(text(),'login') or contains(text(),'sign in')]")))
-            login_btn.click()
+            btn = wait.until(EC.element_to_be_clickable((
+                By.XPATH,
+                "//*[contains(text(),'Log in') or contains(text(),'Sign in')"
+                " or contains(text(),'login') or contains(text(),'sign in')]"
+            )))
+            btn.click()
             time.sleep(2)
         except Exception:
             pass
 
-        # Email input
-        email_input = wait.until(EC.presence_of_element_located(
-            (By.CSS_SELECTOR, "input[type='email'], input[name='email'], input[placeholder*='mail']")))
-        email_input.clear()
-        email_input.send_keys(filter_bmp(email))
+        # Email
+        email_el = wait.until(EC.presence_of_element_located((
+            By.CSS_SELECTOR,
+            "input[type='email'], input[name='email'], input[placeholder*='mail']"
+        )))
+        email_el.clear()
+        email_el.send_keys(filter_bmp(email))
         time.sleep(0.5)
 
-        # Password input
-        pw_input = driver.find_element(
+        # Password
+        pw_el = driver.find_element(
             By.CSS_SELECTOR, "input[type='password'], input[name='password']")
-        pw_input.clear()
-        pw_input.send_keys(filter_bmp(password))
+        pw_el.clear()
+        pw_el.send_keys(filter_bmp(password))
         time.sleep(0.5)
-
-        # Submit
-        pw_input.send_keys(Keys.RETURN)
+        pw_el.send_keys(Keys.RETURN)
         time.sleep(5)
 
-        # Verify: look for textarea
-        try:
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "textarea")))
-            save_cookies(driver)
-            return True
-        except Exception:
-            return False
+        # Verify login
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "textarea")))
+        save_cookies(driver)
+        print("[Login] Password login OK, cookies saved")
+        return True
     except Exception as e:
-        print(f"[Login] Error: {e}")
+        print(f"[Login] Password login failed: {e}")
         return False
 
 
-def find_textarea(driver, wait) -> object:
-    return wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "textarea")))
-
-
 def wait_for_response(driver, timeout: int = 90) -> str:
-    """Poll for assistant response until stable."""
     time.sleep(4)
     last_text = ""
     stable_count = 0
@@ -166,66 +213,64 @@ def scrape_deepseek(
     headless: bool = True,
     user_data_dir: str = None
 ) -> str:
-    """
-    Main entry. Tries: 1) saved cookies 2) user_data_dir 3) email+password login.
-    Then injects prompt and returns DeepSeek response.
-    """
-    options = build_options(headless=headless, user_data_dir=user_data_dir)
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
-    wait = WebDriverWait(driver, 30)
+    browser_type, binary = find_browser()
+    print(f"[Browser] Using {browser_type} ({binary or 'auto-detect'})")
 
+    driver = build_driver(headless=headless, user_data_dir=user_data_dir)
+    wait = WebDriverWait(driver, 30)
     logged_in = False
+
     try:
-        # 1. Try cookies
+        # 1. Cookie
         if not user_data_dir:
             if try_load_cookies(driver):
                 try:
-                    find_textarea(driver, WebDriverWait(driver, 10))
+                    WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "textarea")))
                     logged_in = True
-                    print("[Login] Cookie login OK")
+                    print("[Login] Cookie OK")
                 except Exception:
-                    print("[Login] Cookie expired, trying password...")
+                    print("[Login] Cookie expired")
 
-        # 2. Try user_data_dir (already handled via Chrome options)
+        # 2. Chrome/Edge profile
         if not logged_in and user_data_dir:
             driver.get(DEEPSEEK_URL)
             time.sleep(4)
             try:
-                find_textarea(driver, WebDriverWait(driver, 10))
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "textarea")))
                 logged_in = True
-                print("[Login] Profile login OK")
+                print("[Login] Profile OK")
             except Exception:
-                print("[Login] Profile failed, trying password...")
+                print("[Login] Profile failed")
 
         # 3. Email + password
         if not logged_in and email and password:
             logged_in = login_with_password(driver, wait, email, password)
-            if logged_in:
-                print("[Login] Password login OK, cookies saved")
-            else:
-                return "Login failed. Check email/password or solve captcha manually."
+            if not logged_in:
+                return "Login failed. Check email/password."
 
         if not logged_in:
-            return "Not logged in. Provide email+password or a valid Chrome profile."
+            return "Not logged in. Provide email+password or Chrome profile path."
 
-        # --- Send prompt ---
+        # Send prompt
         driver.get(DEEPSEEK_URL)
         time.sleep(3)
-        textarea = find_textarea(driver, wait)
+        textarea = wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "textarea")))
         set_input_value_js(driver, textarea, prompt)
         time.sleep(1)
 
         # Send button
         try:
-            send_btn = wait.until(EC.element_to_be_clickable(
-                (By.CSS_SELECTOR,
-                 "button[aria-label='Send Message'], "
-                 "button[type='submit'], "
-                 "div[role='button'][data-testid='send-button']")))
+            send_btn = wait.until(EC.element_to_be_clickable((
+                By.CSS_SELECTOR,
+                "button[aria-label='Send Message'], "
+                "button[type='submit'], "
+                "div[role='button'][data-testid='send-button']"
+            )))
             send_btn.click()
         except Exception:
-            # Fallback: Ctrl+Enter
             textarea.send_keys(Keys.CONTROL, Keys.RETURN)
 
         return wait_for_response(driver)
