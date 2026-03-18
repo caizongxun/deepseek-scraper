@@ -2,7 +2,6 @@ import time
 import json
 import os
 import pickle
-import re
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -17,17 +16,19 @@ EDGE_PATHS = [
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
     r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
 ]
+
+_username = os.environ.get("USERNAME", "user")
 CHROME_PATHS = [
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    r"C:\Users\" + os.environ.get("USERNAME", "") + r"\AppData\Local\Google\Chrome\Application\chrome.exe",
+    os.path.join("C:\\Users", _username, "AppData", "Local", "Google", "Chrome", "Application", "chrome.exe"),
 ]
 
 
 def find_browser() -> tuple:
     """
-    Returns (browser_type, binary_path) where browser_type is 'edge' or 'chrome'.
-    Prefers Edge because STW historically uses Edge on Windows.
+    Returns (browser_type, binary_path).
+    Prefers Edge on Windows (same as STW project).
     """
     for p in EDGE_PATHS:
         if os.path.exists(p):
@@ -39,7 +40,7 @@ def find_browser() -> tuple:
 
 
 def build_driver(headless: bool = True, user_data_dir: str = None):
-    """Build Edge or Chrome WebDriver depending on what is installed."""
+    """Build Edge or Chrome WebDriver depending on what's installed."""
     browser, binary = find_browser()
 
     if browser == "edge":
@@ -88,7 +89,7 @@ def filter_bmp(text: str) -> str:
 
 
 def set_input_value_js(driver, element, text: str):
-    """React-compatible JS text injection (handles textarea + contenteditable)."""
+    """React-compatible JS text injection."""
     safe = filter_bmp(text)
     driver.execute_script("""
         var el = arguments[0];
@@ -138,7 +139,6 @@ def login_with_password(driver, wait, email: str, password: str) -> bool:
     try:
         driver.get(DEEPSEEK_URL)
         time.sleep(3)
-        # Click login link if present
         try:
             btn = wait.until(EC.element_to_be_clickable((
                 By.XPATH,
@@ -150,7 +150,6 @@ def login_with_password(driver, wait, email: str, password: str) -> bool:
         except Exception:
             pass
 
-        # Email
         email_el = wait.until(EC.presence_of_element_located((
             By.CSS_SELECTOR,
             "input[type='email'], input[name='email'], input[placeholder*='mail']"
@@ -159,7 +158,6 @@ def login_with_password(driver, wait, email: str, password: str) -> bool:
         email_el.send_keys(filter_bmp(email))
         time.sleep(0.5)
 
-        # Password
         pw_el = driver.find_element(
             By.CSS_SELECTOR, "input[type='password'], input[name='password']")
         pw_el.clear()
@@ -168,7 +166,6 @@ def login_with_password(driver, wait, email: str, password: str) -> bool:
         pw_el.send_keys(Keys.RETURN)
         time.sleep(5)
 
-        # Verify login
         WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "textarea")))
         save_cookies(driver)
