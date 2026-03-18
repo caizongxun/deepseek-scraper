@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeepSeek Market Analyzer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; min-height: 100vh; }
+    header { background: #1a1d2e; padding: 16px 24px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #2a2d3e; }
+    header h1 { font-size: 1.2rem; color: #7c8bff; }
+    .tag { font-size: 0.7rem; background: #2a2d3e; color: #aaa; padding: 2px 8px; border-radius: 99px; }
+    .container { max-width: 960px; margin: 32px auto; padding: 0 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    @media (max-width: 700px) { .container { grid-template-columns: 1fr; } }
+    .card { background: #1a1d2e; border-radius: 12px; padding: 20px; border: 1px solid #2a2d3e; }
+    .card h2 { font-size: 0.95rem; color: #7c8bff; margin-bottom: 12px; }
+    textarea { width: 100%; background: #0f1117; color: #e0e0e0; border: 1px solid #2a2d3e; border-radius: 8px;
+      padding: 10px; font-size: 0.85rem; font-family: monospace; resize: vertical; min-height: 260px; outline: none; }
+    textarea:focus { border-color: #7c8bff; }
+    .btn-row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+    button { padding: 8px 18px; border-radius: 8px; border: none; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: 0.2s; }
+    .btn-primary { background: #7c8bff; color: #fff; }
+    .btn-primary:hover { background: #5c6fe0; }
+    .btn-secondary { background: #2a2d3e; color: #ccc; }
+    .btn-secondary:hover { background: #3a3d55; }
+    .btn-danger { background: #ff5c5c22; color: #ff7070; border: 1px solid #ff7070; }
+    .result-card { grid-column: 1 / -1; }
+    #result-box { white-space: pre-wrap; word-break: break-word; font-size: 0.9rem; line-height: 1.7;
+      background: #0f1117; border: 1px solid #2a2d3e; border-radius: 8px; padding: 16px; min-height: 120px;
+      max-height: 500px; overflow-y: auto; }
+    .status { font-size: 0.8rem; color: #aaa; margin-top: 8px; }
+    .loading { display: inline-block; }
+    .loading::after { content: '...'; animation: dots 1.2s steps(3, end) infinite; }
+    @keyframes dots { 0%,20%{content:'.'} 40%{content:'..'} 60%,100%{content:'...'} }
+    .badge { display: inline-block; font-size: 0.7rem; padding: 2px 8px; border-radius: 99px; margin-left: 8px; }
+    .badge-green { background: #1a3a1a; color: #4caf50; }
+    .badge-red { background: #3a1a1a; color: #f44336; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>DeepSeek Market Analyzer</h1>
+  <span class="tag">爬蟲模式 · 無 API 費用</span>
+</header>
+
+<div class="container">
+  <div class="card">
+    <h2>市場資料 (JSON)</h2>
+    <textarea id="market-input" placeholder='{
+  "symbol": "BTCUSDT",
+  "price": 85000,
+  "change_24h": "+3.2%",
+  "volume_24h": "28B USD",
+  "note": "請分析目前趨勢"
+}'></textarea>
+    <div class="btn-row">
+      <button class="btn-primary" onclick="analyze()">送出分析</button>
+      <button class="btn-secondary" onclick="fetchMarket()">自動抓取市場資料</button>
+      <button class="btn-secondary" onclick="loadExample()">範例資料</button>
+      <button class="btn-danger" onclick="clearAll()">清除</button>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>使用說明</h2>
+    <p style="font-size:0.85rem;line-height:1.8;color:#aaa;">
+      1. 點「自動抓取市場資料」拉取 BTC/ETH 即時價格 + 恐懼貪婪指數<br/>
+      2. 或自己在左側 JSON 編輯器貼入任何市場資料<br/>
+      3. 點「送出分析」— 後端用 Selenium 把 JSON 注入 DeepSeek 聊天框<br/>
+      4. 等待 DeepSeek 回應（約 10-30 秒），結果顯示在下方<br/><br/>
+      <strong style="color:#e0e0e0;">設定 Chrome Profile</strong><br/>
+      後端需要已登入 DeepSeek 的 Chrome Profile。<br/>
+      在終端設定環境變數：<br/>
+      <code style="color:#7c8bff;">CHROME_PROFILE=/path/to/chrome/profile python app.py</code><br/><br/>
+      或設 <code style="color:#7c8bff;">HEADLESS=false</code> 讓瀏覽器視窗可見以手動登入。
+    </p>
+  </div>
+
+  <div class="card result-card">
+    <h2>DeepSeek 分析結果</h2>
+    <div id="result-box">等待分析...</div>
+  </div>
+</div>
+
+<script>
+const API = '';
+
+async function analyze() {
+  const raw = document.getElementById('market-input').value.trim();
+  if (!raw) { setStatus('請先輸入市場資料'); return; }
+  let market_data;
+  try { market_data = JSON.parse(raw); }
+  catch(e) { setStatus('JSON 格式錯誤: ' + e.message); return; }
+
+  setStatus('<span class="loading">分析中</span>，請稍候（約 15-30 秒）');
+  document.getElementById('result-box').textContent = '送出中...';
+
+  try {
+    const res = await fetch(API + '/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ market_data })
+    });
+    const data = await res.json();
+    if (data.error) { document.getElementById('result-box').textContent = '錯誤: ' + data.error; }
+    else { document.getElementById('result-box').textContent = data.result; }
+    setStatus('完成');
+  } catch(e) {
+    document.getElementById('result-box').textContent = '連線失敗: ' + e.message;
+    setStatus('錯誤');
+  }
+}
+
+async function fetchMarket() {
+  setStatus('<span class="loading">抓取市場資料中</span>');
+  try {
+    const res = await fetch(API + '/api/fetch-market');
+    const data = await res.json();
+    document.getElementById('market-input').value = JSON.stringify(data, null, 2);
+    setStatus('市場資料已更新');
+  } catch(e) {
+    setStatus('抓取失敗: ' + e.message);
+  }
+}
+
+function loadExample() {
+  const ex = {
+    symbol: "BTCUSDT",
+    price_usd: 85000,
+    change_24h_pct: 3.2,
+    volume_24h_usd: "28000000000",
+    fear_greed_index: 72,
+    fear_greed_label: "Greed",
+    dominance_btc_pct: 58.3,
+    top_news: [
+      "Fed 暗示 2025 年降息 2 次",
+      "BlackRock BTC ETF 單日流入 4.2 億美元",
+      "中國解除加密貨幣限制傳聞"
+    ],
+    question: "請根據以上資訊分析 BTC 短期走勢"
+  };
+  document.getElementById('market-input').value = JSON.stringify(ex, null, 2);
+  setStatus('已載入範例資料');
+}
+
+function clearAll() {
+  document.getElementById('market-input').value = '';
+  document.getElementById('result-box').textContent = '等待分析...';
+  setStatus('');
+}
+
+function setStatus(html) {
+  document.getElementById('status').innerHTML = html;
+}
+</script>
+</body>
+</html>
