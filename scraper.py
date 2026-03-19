@@ -1,7 +1,7 @@
 import time
-import json
 import os
 import pickle
+import subprocess
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -11,42 +11,63 @@ from selenium.webdriver.common.keys import Keys
 DEEPSEEK_URL = "https://chat.deepseek.com"
 COOKIE_FILE = "deepseek_cookies.pkl"
 
-# Windows default Edge/Chrome binary paths
-EDGE_PATHS = [
-    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+# Edge binary + driver candidates (same folder)
+EDGE_DIRS = [
+    r"C:\Program Files (x86)\Microsoft\Edge\Application",
+    r"C:\Program Files\Microsoft\Edge\Application",
 ]
 
 _username = os.environ.get("USERNAME", "user")
 CHROME_PATHS = [
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    os.path.join("C:\\Users", _username, "AppData", "Local", "Google", "Chrome", "Application", "chrome.exe"),
+    os.path.join("C:\\Users", _username, "AppData", "Local",
+                 "Google", "Chrome", "Application", "chrome.exe"),
 ]
+
+
+def _find_edge() -> tuple:
+    """Return (msedge.exe path, msedgedriver.exe path) or (None, None)."""
+    for d in EDGE_DIRS:
+        edge_bin = os.path.join(d, "msedge.exe")
+        if not os.path.exists(edge_bin):
+            continue
+        # msedgedriver lives in the same versioned sub-folder or alongside
+        driver_path = os.path.join(d, "msedgedriver.exe")
+        if os.path.exists(driver_path):
+            return edge_bin, driver_path
+        # search versioned sub-directories
+        for item in os.listdir(d):
+            candidate = os.path.join(d, item, "msedgedriver.exe")
+            if os.path.exists(candidate):
+                return edge_bin, candidate
+        # driver not found in install dir; return binary only (will use PATH)
+        return edge_bin, None
+    return None, None
 
 
 def find_browser() -> tuple:
     """
-    Returns (browser_type, binary_path).
-    Prefers Edge on Windows (same as STW project).
+    Returns (browser_type, binary_path, driver_path).
+    driver_path may be None (use PATH / webdriver-manager as fallback).
     """
-    for p in EDGE_PATHS:
-        if os.path.exists(p):
-            return "edge", p
+    edge_bin, edge_drv = _find_edge()
+    if edge_bin:
+        return "edge", edge_bin, edge_drv
     for p in CHROME_PATHS:
         if os.path.exists(p):
-            return "chrome", p
-    return "chrome", None  # let webdriver-manager try
+            return "chrome", p, None
+    return "chrome", None, None
 
 
 def build_driver(headless: bool = True, user_data_dir: str = None):
-    """Build Edge or Chrome WebDriver depending on what's installed."""
-    browser, binary = find_browser()
+    """Build Edge (preferred) or Chrome WebDriver using local binaries."""
+    browser, binary, driver_exe = find_browser()
+    print(f"[Browser] {browser} | binary={binary} | driver={driver_exe}")
 
     if browser == "edge":
         from selenium.webdriver.edge.options import Options as EdgeOptions
         from selenium.webdriver.edge.service import Service as EdgeService
-        from webdriver_manager.microsoft import EdgeChromiumDriverManager
 
         opts = EdgeOptions()
         if binary:
@@ -60,12 +81,17 @@ def build_driver(headless: bool = True, user_data_dir: str = None):
         opts.add_argument("--lang=zh-TW")
         if user_data_dir:
             opts.add_argument(f"--user-data-dir={user_data_dir}")
-        service = EdgeService(EdgeChromiumDriverManager().install())
+
+        if driver_exe:
+            service = EdgeService(executable_path=driver_exe)
+        else:
+            # Fallback: let Selenium find msedgedriver on PATH
+            service = EdgeService()
         return webdriver.Edge(service=service, options=opts)
+
     else:
         from selenium.webdriver.chrome.options import Options as ChromeOptions
         from selenium.webdriver.chrome.service import Service as ChromeService
-        from webdriver_manager.chrome import ChromeDriverManager
 
         opts = ChromeOptions()
         if binary:
@@ -79,12 +105,20 @@ def build_driver(headless: bool = True, user_data_dir: str = None):
         opts.add_argument("--lang=zh-TW")
         if user_data_dir:
             opts.add_argument(f"--user-data-dir={user_data_dir}")
-        service = ChromeService(ChromeDriverManager().install())
-        return webdriver.Chrome(service=service, options=opts)
+
+        # Try local chromedriver on PATH first
+        try:
+            service = ChromeService()
+            return webdriver.Chrome(service=service, options=opts)
+        except Exception:
+            from webdriver_manager.chrome import ChromeDriverManager
+            from selenium.webdriver.chrome.service import Service as CS2
+            service = CS2(ChromeDriverManager().install())
+            return webdriver.Chrome(service=service, options=opts)
 
 
 def filter_bmp(text: str) -> str:
-    """Strip non-BMP chars (emoji etc) to avoid msedgedriver BMP-only crash."""
+    """Strip non-BMP chars to avoid msedgedriver BMP-only crash."""
     return "".join(c for c in text if ord(c) < 0x10000)
 
 
@@ -94,14 +128,10 @@ def set_input_value_js(driver, element, text: str):
     driver.execute_script("""
         var el = arguments[0];
         var text = arguments[1];
-        var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        var setter = Object.getOwnPropertyDescriptor(
             window.HTMLTextAreaElement.prototype, 'value') ||
             Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
-        if (nativeInputValueSetter) {
-            nativeInputValueSetter.set.call(el, text);
-        } else {
-            el.value = text;
-        }
+        if (setter) { setter.set.call(el, text); } else { el.value = text; }
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
     """, element, safe)
@@ -210,9 +240,6 @@ def scrape_deepseek(
     headless: bool = True,
     user_data_dir: str = None
 ) -> str:
-    browser_type, binary = find_browser()
-    print(f"[Browser] Using {browser_type} ({binary or 'auto-detect'})")
-
     driver = build_driver(headless=headless, user_data_dir=user_data_dir)
     wait = WebDriverWait(driver, 30)
     logged_in = False
@@ -229,7 +256,7 @@ def scrape_deepseek(
                 except Exception:
                     print("[Login] Cookie expired")
 
-        # 2. Chrome/Edge profile
+        # 2. Edge/Chrome profile
         if not logged_in and user_data_dir:
             driver.get(DEEPSEEK_URL)
             time.sleep(4)
@@ -248,7 +275,7 @@ def scrape_deepseek(
                 return "Login failed. Check email/password."
 
         if not logged_in:
-            return "Not logged in. Provide email+password or Chrome profile path."
+            return "Not logged in. Provide email+password or Edge profile path."
 
         # Send prompt
         driver.get(DEEPSEEK_URL)
@@ -258,7 +285,6 @@ def scrape_deepseek(
         set_input_value_js(driver, textarea, prompt)
         time.sleep(1)
 
-        # Send button
         try:
             send_btn = wait.until(EC.element_to_be_clickable((
                 By.CSS_SELECTOR,
