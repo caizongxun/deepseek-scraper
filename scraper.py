@@ -1,6 +1,7 @@
 import time
 import os
 import pickle
+import glob
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -11,7 +12,6 @@ DEEPSEEK_URL = "https://chat.deepseek.com"
 LOGIN_URL = "https://chat.deepseek.com/sign_in"
 COOKIE_FILE = "deepseek_cookies.pkl"
 
-# Edge binary + driver candidates
 EDGE_DIRS = [
     r"C:\Program Files (x86)\Microsoft\Edge\Application",
     r"C:\Program Files\Microsoft\Edge\Application",
@@ -26,43 +26,57 @@ CHROME_PATHS = [
 ]
 
 
-def _find_edge() -> tuple:
+def _find_msedgedriver() -> str | None:
+    """
+    Search all known locations for msedgedriver.exe.
+    Order:
+      1. Same dir as msedge.exe
+      2. Versioned subdirs under Edge Application
+      3. webdriver-manager cache  (~/.wdm)
+      4. PATH (return None, Selenium will handle)
+    """
+    # 1 & 2: Edge install dirs
     for d in EDGE_DIRS:
-        edge_bin = os.path.join(d, "msedge.exe")
-        if not os.path.exists(edge_bin):
+        if not os.path.isdir(d):
             continue
-        driver_path = os.path.join(d, "msedgedriver.exe")
-        if os.path.exists(driver_path):
-            return edge_bin, driver_path
-        for item in os.listdir(d):
-            candidate = os.path.join(d, item, "msedgedriver.exe")
-            if os.path.exists(candidate):
-                return edge_bin, candidate
-        return edge_bin, None
-    return None, None
-
-
-def find_browser() -> tuple:
-    edge_bin, edge_drv = _find_edge()
-    if edge_bin:
-        return "edge", edge_bin, edge_drv
-    for p in CHROME_PATHS:
+        # direct
+        p = os.path.join(d, "msedgedriver.exe")
         if os.path.exists(p):
-            return "chrome", p, None
-    return "chrome", None, None
+            return p
+        # versioned sub-folders like 134.0.3124.72\
+        for item in sorted(os.listdir(d), reverse=True):
+            p = os.path.join(d, item, "msedgedriver.exe")
+            if os.path.exists(p):
+                return p
+
+    # 3: webdriver-manager cache
+    wdm_cache = os.path.join(os.path.expanduser("~"), ".wdm", "drivers", "msedgedriver")
+    matches = glob.glob(os.path.join(wdm_cache, "**", "msedgedriver.exe"), recursive=True)
+    if matches:
+        return sorted(matches)[-1]  # newest
+
+    return None  # let Selenium-manager find it on PATH
+
+
+def _find_edge_binary() -> str | None:
+    for d in EDGE_DIRS:
+        p = os.path.join(d, "msedge.exe")
+        if os.path.exists(p):
+            return p
+    return None
 
 
 def build_driver(headless: bool = True, user_data_dir: str = None):
-    browser, binary, driver_exe = find_browser()
-    print(f"[Browser] {browser} | binary={binary} | driver={driver_exe}")
+    edge_bin = _find_edge_binary()
+    edge_drv = _find_msedgedriver()
+    print(f"[Browser] edge | binary={edge_bin} | driver={edge_drv}")
 
-    if browser == "edge":
+    if edge_bin:
         from selenium.webdriver.edge.options import Options as EdgeOptions
         from selenium.webdriver.edge.service import Service as EdgeService
 
         opts = EdgeOptions()
-        if binary:
-            opts.binary_location = binary
+        opts.binary_location = edge_bin
         if headless:
             opts.add_argument("--headless=new")
         opts.add_argument("--no-sandbox")
@@ -70,33 +84,37 @@ def build_driver(headless: bool = True, user_data_dir: str = None):
         opts.add_argument("--disable-gpu")
         opts.add_argument("--window-size=1280,900")
         opts.add_argument("--lang=zh-TW")
+        # suppress DevTools / GPU error noise
+        opts.add_experimental_option("excludeSwitches", ["enable-logging"])
         if user_data_dir:
             opts.add_argument(f"--user-data-dir={user_data_dir}")
-        service = EdgeService(executable_path=driver_exe) if driver_exe else EdgeService()
-        return webdriver.Edge(service=service, options=opts)
-    else:
-        from selenium.webdriver.chrome.options import Options as ChromeOptions
-        from selenium.webdriver.chrome.service import Service as ChromeService
 
-        opts = ChromeOptions()
-        if binary:
-            opts.binary_location = binary
-        if headless:
-            opts.add_argument("--headless=new")
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-dev-shm-usage")
-        opts.add_argument("--disable-gpu")
-        opts.add_argument("--window-size=1280,900")
-        opts.add_argument("--lang=zh-TW")
-        if user_data_dir:
-            opts.add_argument(f"--user-data-dir={user_data_dir}")
-        try:
-            service = ChromeService()
-            return webdriver.Chrome(service=service, options=opts)
-        except Exception:
-            from webdriver_manager.chrome import ChromeDriverManager
-            from selenium.webdriver.chrome.service import Service as CS2
-            return webdriver.Chrome(service=CS2(ChromeDriverManager().install()), options=opts)
+        if edge_drv:
+            service = EdgeService(executable_path=edge_drv)
+        else:
+            # Selenium 4.6+ ships selenium-manager which can locate msedgedriver
+            service = EdgeService()
+
+        return webdriver.Edge(service=service, options=opts)
+
+    # Fallback: Chrome
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+    from selenium.webdriver.chrome.service import Service as ChromeService
+
+    chrome_bin = next((p for p in CHROME_PATHS if os.path.exists(p)), None)
+    opts = ChromeOptions()
+    if chrome_bin:
+        opts.binary_location = chrome_bin
+    if headless:
+        opts.add_argument("--headless=new")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--window-size=1280,900")
+    opts.add_argument("--lang=zh-TW")
+    if user_data_dir:
+        opts.add_argument(f"--user-data-dir={user_data_dir}")
+    return webdriver.Chrome(service=ChromeService(), options=opts)
 
 
 def filter_bmp(text: str) -> str:
@@ -104,17 +122,13 @@ def filter_bmp(text: str) -> str:
 
 
 def set_input_value_js(driver, element, text: str):
-    """React-compatible value injection — works on both input and textarea."""
     safe = filter_bmp(text)
     driver.execute_script("""
-        var el = arguments[0];
-        var val = arguments[1];
-        var inputProto = window.HTMLInputElement.prototype;
-        var taProto   = window.HTMLTextAreaElement.prototype;
-        var setter = Object.getOwnPropertyDescriptor(inputProto, 'value') ||
-                     Object.getOwnPropertyDescriptor(taProto, 'value');
-        if (setter && setter.set) { setter.set.call(el, val); }
-        else { el.value = val; }
+        var el = arguments[0], val = arguments[1];
+        var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+                  || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+        if (setter && setter.set) setter.set.call(el, val);
+        else el.value = val;
         el.dispatchEvent(new Event('input',  { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
     """, element, safe)
@@ -149,18 +163,11 @@ def save_cookies(driver):
 
 
 def login_with_password(driver, wait, email: str, password: str) -> bool:
-    """
-    DeepSeek login page selectors (from actual page HTML):
-      email:    input.ds-input__input[type='text']   (placeholder: 请输入手机号/邮箱地址)
-      password: input.ds-input__input[type='password']
-      submit:   button.ds-basic-button--primary  (contains span '登录')
-    """
     try:
         driver.get(LOGIN_URL)
         time.sleep(3)
 
-        # ── Email field ──────────────────────────────────────────────────────
-        # Exact match from HTML: input.ds-input__input with type=text
+        # Email: type='text', class ds-input__input, inside ds-sign-in-form__main
         email_el = wait.until(EC.presence_of_element_located((
             By.CSS_SELECTOR,
             "div.ds-sign-in-form__main input.ds-input__input[type='text']"
@@ -171,7 +178,7 @@ def login_with_password(driver, wait, email: str, password: str) -> bool:
         print(f"[Login] Email entered: {email}")
         time.sleep(0.5)
 
-        # ── Password field ───────────────────────────────────────────────────
+        # Password
         pw_el = wait.until(EC.presence_of_element_located((
             By.CSS_SELECTOR,
             "div.ds-sign-in-form__main input.ds-input__input[type='password']"
@@ -182,19 +189,14 @@ def login_with_password(driver, wait, email: str, password: str) -> bool:
         print("[Login] Password entered")
         time.sleep(0.5)
 
-        # ── Submit button ────────────────────────────────────────────────────
-        # <button class="ds-atom-button ds-basic-button ds-basic-button--primary">
-        #   <span>登录</span>
-        # </button>
+        # Submit: button.ds-basic-button--primary > span '登录'
         login_btn = wait.until(EC.element_to_be_clickable((
-            By.CSS_SELECTOR,
-            "button.ds-basic-button--primary"
+            By.CSS_SELECTOR, "button.ds-basic-button--primary"
         )))
         login_btn.click()
         print("[Login] Submit clicked")
         time.sleep(5)
 
-        # ── Verify: chat textarea should appear after successful login ───────
         WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "textarea")))
         save_cookies(driver)
@@ -203,11 +205,10 @@ def login_with_password(driver, wait, email: str, password: str) -> bool:
 
     except Exception as e:
         print(f"[Login] Failed: {e}")
-        # Dump page source for debugging
         try:
             with open("login_debug.html", "w", encoding="utf-8") as f:
                 f.write(driver.page_source)
-            print("[Login] Page source saved to login_debug.html")
+            print("[Login] Saved login_debug.html")
         except Exception:
             pass
         return False
@@ -263,7 +264,7 @@ def scrape_deepseek(
                 except Exception:
                     print("[Login] Cookie expired")
 
-        # 2. Edge/Chrome profile
+        # 2. Profile
         if not logged_in and user_data_dir:
             driver.get(DEEPSEEK_URL)
             time.sleep(4)
@@ -279,12 +280,12 @@ def scrape_deepseek(
         if not logged_in and email and password:
             logged_in = login_with_password(driver, wait, email, password)
             if not logged_in:
-                return "Login failed. Check email/password or see login_debug.html"
+                return "Login failed. See login_debug.html for details."
 
         if not logged_in:
             return "Not logged in. Provide email+password or Edge profile path."
 
-        # ── Send prompt ──────────────────────────────────────────────────────
+        # Send prompt
         driver.get(DEEPSEEK_URL)
         time.sleep(3)
         textarea = wait.until(
@@ -292,7 +293,6 @@ def scrape_deepseek(
         set_input_value_js(driver, textarea, prompt)
         time.sleep(1)
 
-        # Send button — DeepSeek uses aria-label or data-testid
         try:
             send_btn = wait.until(EC.element_to_be_clickable((
                 By.CSS_SELECTOR,
@@ -301,7 +301,6 @@ def scrape_deepseek(
             )))
             send_btn.click()
         except Exception:
-            # Fallback: Enter key
             textarea.send_keys(Keys.RETURN)
 
         return wait_for_response(driver)
