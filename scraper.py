@@ -11,6 +11,7 @@ from selenium.webdriver.common.keys import Keys
 DEEPSEEK_URL = "https://chat.deepseek.com"
 LOGIN_URL = "https://chat.deepseek.com/sign_in"
 COOKIE_FILE = "deepseek_cookies.pkl"
+DRIVER_PATH_FILE = "driver_path.txt"  # cached driver location
 
 EDGE_DIRS = [
     r"C:\Program Files (x86)\Microsoft\Edge\Application",
@@ -26,36 +27,68 @@ CHROME_PATHS = [
 ]
 
 
+def _save_driver_path(path: str):
+    try:
+        with open(DRIVER_PATH_FILE, "w") as f:
+            f.write(path)
+        print(f"[Driver] Saved path to {DRIVER_PATH_FILE}")
+    except Exception:
+        pass
+
+
 def _find_msedgedriver() -> str | None:
-    """
-    Search all known locations for msedgedriver.exe.
-    Order:
-      1. Same dir as msedge.exe
-      2. Versioned subdirs under Edge Application
-      3. webdriver-manager cache  (~/.wdm)
-      4. PATH (return None, Selenium will handle)
-    """
-    # 1 & 2: Edge install dirs
+    # 0. Previously found and saved
+    if os.path.exists(DRIVER_PATH_FILE):
+        cached = open(DRIVER_PATH_FILE).read().strip()
+        if os.path.exists(cached):
+            print(f"[Driver] Using cached: {cached}")
+            return cached
+
+    # 1. Known Edge install dirs (root + versioned sub-folders)
     for d in EDGE_DIRS:
         if not os.path.isdir(d):
             continue
-        # direct
         p = os.path.join(d, "msedgedriver.exe")
         if os.path.exists(p):
+            _save_driver_path(p)
             return p
-        # versioned sub-folders like 134.0.3124.72\
         for item in sorted(os.listdir(d), reverse=True):
             p = os.path.join(d, item, "msedgedriver.exe")
             if os.path.exists(p):
+                _save_driver_path(p)
                 return p
 
-    # 3: webdriver-manager cache
-    wdm_cache = os.path.join(os.path.expanduser("~"), ".wdm", "drivers", "msedgedriver")
-    matches = glob.glob(os.path.join(wdm_cache, "**", "msedgedriver.exe"), recursive=True)
+    # 2. webdriver-manager cache
+    wdm = os.path.join(os.path.expanduser("~"), ".wdm", "drivers", "msedgedriver")
+    matches = glob.glob(os.path.join(wdm, "**", "msedgedriver.exe"), recursive=True)
     if matches:
-        return sorted(matches)[-1]  # newest
+        p = sorted(matches)[-1]
+        _save_driver_path(p)
+        return p
 
-    return None  # let Selenium-manager find it on PATH
+    # 3. Project root (user may have copied it here manually)
+    local = os.path.join(os.path.dirname(__file__), "msedgedriver.exe")
+    if os.path.exists(local):
+        _save_driver_path(local)
+        return local
+
+    # 4. Full C:\ scan (auto, runs once, result cached)
+    print("[Driver] msedgedriver.exe not found in known locations.")
+    print("[Driver] Scanning C:\\ ... (one-time, may take ~60s)")
+    skip = {"Windows", "$Recycle.Bin", "System Volume Information",
+            "WinSxS", "Temp", "tmp", "ProgramData"}
+    for root, dirs, files in os.walk("C:\\"):
+        dirs[:] = [d for d in dirs if d not in skip]
+        if "msedgedriver.exe" in files:
+            p = os.path.join(root, "msedgedriver.exe")
+            print(f"[Driver] Found by scan: {p}")
+            _save_driver_path(p)
+            return p
+
+    print("[Driver] msedgedriver.exe NOT found on this machine.")
+    print("[Driver] Download from https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver/")
+    print("[Driver] Place msedgedriver.exe in this project folder and restart.")
+    return None
 
 
 def _find_edge_binary() -> str | None:
@@ -84,7 +117,6 @@ def build_driver(headless: bool = True, user_data_dir: str = None):
         opts.add_argument("--disable-gpu")
         opts.add_argument("--window-size=1280,900")
         opts.add_argument("--lang=zh-TW")
-        # suppress DevTools / GPU error noise
         opts.add_experimental_option("excludeSwitches", ["enable-logging"])
         if user_data_dir:
             opts.add_argument(f"--user-data-dir={user_data_dir}")
@@ -92,15 +124,12 @@ def build_driver(headless: bool = True, user_data_dir: str = None):
         if edge_drv:
             service = EdgeService(executable_path=edge_drv)
         else:
-            # Selenium 4.6+ ships selenium-manager which can locate msedgedriver
-            service = EdgeService()
-
+            service = EdgeService()  # hope selenium-manager finds it
         return webdriver.Edge(service=service, options=opts)
 
     # Fallback: Chrome
     from selenium.webdriver.chrome.options import Options as ChromeOptions
     from selenium.webdriver.chrome.service import Service as ChromeService
-
     chrome_bin = next((p for p in CHROME_PATHS if os.path.exists(p)), None)
     opts = ChromeOptions()
     if chrome_bin:
@@ -167,7 +196,6 @@ def login_with_password(driver, wait, email: str, password: str) -> bool:
         driver.get(LOGIN_URL)
         time.sleep(3)
 
-        # Email: type='text', class ds-input__input, inside ds-sign-in-form__main
         email_el = wait.until(EC.presence_of_element_located((
             By.CSS_SELECTOR,
             "div.ds-sign-in-form__main input.ds-input__input[type='text']"
@@ -178,7 +206,6 @@ def login_with_password(driver, wait, email: str, password: str) -> bool:
         print(f"[Login] Email entered: {email}")
         time.sleep(0.5)
 
-        # Password
         pw_el = wait.until(EC.presence_of_element_located((
             By.CSS_SELECTOR,
             "div.ds-sign-in-form__main input.ds-input__input[type='password']"
@@ -189,7 +216,6 @@ def login_with_password(driver, wait, email: str, password: str) -> bool:
         print("[Login] Password entered")
         time.sleep(0.5)
 
-        # Submit: button.ds-basic-button--primary > span '登录'
         login_btn = wait.until(EC.element_to_be_clickable((
             By.CSS_SELECTOR, "button.ds-basic-button--primary"
         )))
@@ -253,7 +279,6 @@ def scrape_deepseek(
     logged_in = False
 
     try:
-        # 1. Cookie
         if not user_data_dir:
             if try_load_cookies(driver):
                 try:
@@ -264,7 +289,6 @@ def scrape_deepseek(
                 except Exception:
                     print("[Login] Cookie expired")
 
-        # 2. Profile
         if not logged_in and user_data_dir:
             driver.get(DEEPSEEK_URL)
             time.sleep(4)
@@ -276,7 +300,6 @@ def scrape_deepseek(
             except Exception:
                 print("[Login] Profile failed")
 
-        # 3. Email + password
         if not logged_in and email and password:
             logged_in = login_with_password(driver, wait, email, password)
             if not logged_in:
@@ -285,7 +308,6 @@ def scrape_deepseek(
         if not logged_in:
             return "Not logged in. Provide email+password or Edge profile path."
 
-        # Send prompt
         driver.get(DEEPSEEK_URL)
         time.sleep(3)
         textarea = wait.until(
